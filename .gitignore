@@ -1,0 +1,9 @@
+node_modules
+dist
+.vercel
+.env
+.env.local
+*.log
+*.mp4
+database.sqlite*
+.DS_Store
