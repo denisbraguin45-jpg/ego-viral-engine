@@ -1,6 +1,7 @@
 import { chromium } from 'playwright';
 import fs from 'fs';
 import path from 'path';
+import { normalizeVideoForTikTok } from './videoNormalizer.ts';
 
 export interface WebUploadResult {
   success: boolean;
@@ -9,27 +10,31 @@ export interface WebUploadResult {
   postUrl?: string;
 }
 
-/**
- * Faz upload de um vídeo diretamente no TikTok Studio usando o cookie `sessionid`
- * da conta @egotv00 de forma 100% automatizada e pública.
- */
 export async function uploadToTikTokWeb(options: {
   filePath: string;
   caption: string;
   sessionId: string;
   headless?: boolean;
 }): Promise<WebUploadResult> {
-  const { filePath, caption, sessionId, headless = true } = options;
+  const { filePath: rawPath, caption, sessionId, headless = true } = options;
 
-  if (!fs.existsSync(filePath)) {
-    return { success: false, message: `Arquivo de vídeo não encontrado no disco: ${filePath}` };
+  if (!fs.existsSync(rawPath)) {
+    return { success: false, message: `Arquivo de vídeo não encontrado no disco: ${rawPath}` };
   }
 
   if (!sessionId || sessionId.trim().length < 10) {
     return {
       success: false,
-      message: 'Cookie sessionid inválido ou ausente. Insira o sessionid da sua conta @egotv00.',
+      message: 'Cookie sessionid inválido ou ausente.',
     };
+  }
+
+  // Normaliza o vídeo para formato 9:16 padrão do TikTok
+  let uploadPath = rawPath;
+  try {
+    uploadPath = await normalizeVideoForTikTok(rawPath);
+  } catch (err: any) {
+    console.warn('[TikTokWebUploader] Normalização ignorada:', err.message);
   }
 
   let browser;
@@ -45,7 +50,6 @@ export async function uploadToTikTokWeb(options: {
       viewport: { width: 1440, height: 900 },
     });
 
-    // Injeta cookies de autenticação no domínio TikTok
     await context.addCookies([
       { name: 'sessionid', value: sessionId.trim(), domain: '.tiktok.com', path: '/', httpOnly: true, secure: true },
       { name: 'sessionid_ss', value: sessionId.trim(), domain: '.tiktok.com', path: '/', httpOnly: true, secure: true },
@@ -62,8 +66,7 @@ export async function uploadToTikTokWeb(options: {
 
     await page.waitForTimeout(4000);
 
-    const currentUrl = page.url();
-    if (currentUrl.includes('/login')) {
+    if (page.url().includes('/login')) {
       await browser.close();
       return {
         success: false,
@@ -71,8 +74,7 @@ export async function uploadToTikTokWeb(options: {
       };
     }
 
-    // Localiza o input de arquivo (input[type="file"])
-    console.log('[TikTokWebUploader] Anexando arquivo MP4 do Disco D...');
+    console.log('[TikTokWebUploader] Anexando arquivo MP4 normalizado do Disco D...');
     const fileInput = await page.waitForSelector('input[type="file"]', { state: 'attached', timeout: 20000 });
     if (!fileInput) {
       await browser.close();
@@ -82,82 +84,59 @@ export async function uploadToTikTokWeb(options: {
       };
     }
 
-    await fileInput.setInputFiles(filePath);
+    await fileInput.setInputFiles(uploadPath);
 
-    // Aguarda o processamento inicial do vídeo
-    await page.waitForTimeout(10000);
+    // Aguarda o upload do arquivo ser processado (até 30s com polling de 'Uploaded')
+    console.log('[TikTokWebUploader] Aguardando processamento e confirmação de upload no TikTok Studio...');
+    let uploadReady = false;
+    for (let attempts = 0; attempts < 15; attempts++) {
+      await page.waitForTimeout(2000);
+      const isReady = await page.evaluate(() => {
+        const text = document.body.innerText;
+        return text.includes('Uploaded') || text.includes('Carregado') || document.querySelector('button.Button__root--type-primary') !== null;
+      });
+      if (isReady) {
+        uploadReady = true;
+        break;
+      }
+    }
 
     // Neutraliza overlays de tutorial do TikTok (react-joyride-portal, TUXModal)
-    console.log('[TikTokWebUploader] Neutralizando modais e tours guiados...');
     await page.evaluate(() => {
       const joyride = document.getElementById('react-joyride-portal');
       if (joyride) joyride.remove();
       const overlays = document.querySelectorAll('.react-joyride__overlay, .TUXModal-overlay, [data-floating-ui-portal]');
       overlays.forEach((o) => o.remove());
+      const btns = Array.from(document.querySelectorAll('button')).filter(b => b.innerText.includes('Got it') || b.innerText.includes('Entendi'));
+      btns.forEach(b => (b as HTMLButtonElement).click());
     });
 
-    // Fecha botões de popups se houver
-    const closeSelectors = [
-      'button:has-text("Got it")',
-      'button:has-text("Turn on")',
-      'button:has-text("Cancel")',
-      'button:has-text("Entendi")',
-      '.TUXModal-close',
-    ];
-    for (const s of closeSelectors) {
-      const el = await page.$(s);
-      if (el && (await el.isVisible())) {
-        await el.click().catch(() => {});
-        await page.waitForTimeout(500);
-      }
-    }
-
-    // Preenche a legenda e hashtags
+    // Preenche a legenda
     console.log('[TikTokWebUploader] Preenchendo legenda/hashtags...');
     try {
-      const captionEl = await page.$('.notranslate[contenteditable="true"], div[contenteditable="true"]');
+      const captionSelectors = [
+        'div[contenteditable="true"]',
+        '.DraftEditor-root div[contenteditable="true"]',
+        'div[data-placeholder]',
+        'textarea',
+      ];
+      let captionEl = null;
+      for (const sel of captionSelectors) {
+        captionEl = await page.$(sel);
+        if (captionEl) break;
+      }
+
       if (captionEl) {
         await captionEl.click({ force: true });
         await page.keyboard.press('Control+A');
         await page.keyboard.press('Backspace');
-        await page.keyboard.type(caption, { delay: 20 });
+        await page.keyboard.type(caption, { delay: 15 });
       }
     } catch {}
 
     await page.waitForTimeout(2000);
 
-    // Garantir visibilidade pública ("Everyone" / "Todos")
-    console.log('[TikTokWebUploader] Garantindo visibilidade pública (Everyone)...');
-    try {
-      // Procura o seletor de "Who can see this post" / "Quem pode assistir a este vídeo"
-      const privacyTrigger = await page.$('button:has-text("Only me"), button:has-text("Friends"), button:has-text("Amigos"), button:has-text("Somente eu"), .Select__trigger');
-      if (privacyTrigger) {
-        const currentVal = await privacyTrigger.innerText();
-        if (!currentVal.toLowerCase().includes('everyone') && !currentVal.toLowerCase().includes('todos')) {
-          await privacyTrigger.click({ force: true });
-          await page.waitForTimeout(1000);
-          const everyoneOpt = await page.$('div[role="option"]:has-text("Everyone"), div[role="option"]:has-text("Todos"), li:has-text("Everyone"), li:has-text("Todos")');
-          if (everyoneOpt) {
-            await everyoneOpt.click({ force: true });
-            console.log('[TikTokWebUploader] Visibilidade alterada para Público (Everyone)!');
-          }
-        }
-      }
-    } catch (e: any) {
-      console.log('[TikTokWebUploader] Aviso seletor privacidade:', e.message);
-    }
-
-    await page.waitForTimeout(3000);
-
-    // Remove qualquer overlay residual novamente antes de clicar no Post
-    await page.evaluate(() => {
-      const joyride = document.getElementById('react-joyride-portal');
-      if (joyride) joyride.remove();
-      const overlays = document.querySelectorAll('.react-joyride__overlay, .TUXModal-overlay');
-      overlays.forEach((o) => o.remove());
-    });
-
-    // Dispara o clique no botão Post de envio real
+    // Dispara o clique no botão Post
     console.log('[TikTokWebUploader] Acionando botão Post...');
     const postClicked = await page.evaluate(() => {
       const btns = Array.from(document.querySelectorAll('button'));
@@ -180,11 +159,19 @@ export async function uploadToTikTokWeb(options: {
       };
     }
 
-    // Aguarda a confirmação do envio e redirecionamento para /tiktokstudio/content
+    // Aguarda confirmação do servidor TikTok
     console.log('[TikTokWebUploader] Aguardando confirmação do servidor TikTok...');
-    await page.waitForTimeout(14000);
+    await page.waitForTimeout(10000);
 
-    const confirmationText = await page.evaluate(() => document.body.innerText.slice(0, 1000));
+    // Se abrir modal secundário de "Post anyway", clica nele
+    await page.evaluate(() => {
+      const btns = Array.from(document.querySelectorAll('button'));
+      const anywayBtn = btns.find(b => b.innerText.includes('Post anyway') || b.innerText.includes('Publicar mesmo assim'));
+      if (anywayBtn) (anywayBtn as HTMLButtonElement).click();
+    });
+
+    await page.waitForTimeout(5000);
+
     await browser.close();
 
     const timestampId = `tt_web_${Date.now()}`;
