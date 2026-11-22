@@ -8,6 +8,8 @@ import bcrypt from 'bcryptjs';
 import jwt from 'jsonwebtoken';
 import multer from 'multer';
 import { db, initDatabase } from './db.ts';
+import { initEgoTVOperationsTables } from './egotvDb.ts';
+import { egotvRouter } from './routes/egotvOperations.ts';
 import { calculateRadarRelevance } from './services/radarEngine.ts';
 import { generatePlatformCopy, validateCopyCompliance } from './services/copyGenerator.ts';
 import { executeOfficialPublish, getIntegrationCapabilities } from './services/socialIntegrations.ts';
@@ -33,6 +35,7 @@ import {
 
 dotenv.config();
 initDatabase();
+initEgoTVOperationsTables();
 
 export const app = express();
 const PORT = Number(process.env.PORT) || 3333;
@@ -41,6 +44,9 @@ const JWT_SECRET = process.env.JWT_SECRET || 'ego-tv-super-secret-jwt-key-2026';
 app.use(cors());
 app.use(express.json());
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+
+// Montagem do Módulo EgoTV Operations
+app.use('/api/egotv', egotvRouter);
 
 // Configuração de Upload Autorizado (Multer)
 const storage = multer.diskStorage({

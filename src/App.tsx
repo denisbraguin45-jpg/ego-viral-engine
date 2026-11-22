@@ -32,8 +32,9 @@ import {
   FileCheck2,
   Link2
 } from 'lucide-react';
+import { EgoTVOperations } from './components/EgoTVOperations';
 
-type TabId = 'DASHBOARD' | 'RADAR' | 'PIPELINE' | 'INTELLIGENCE' | 'LIBRARY' | 'PREPARATION' | 'CALENDAR' | 'ANALYTICS' | 'CHANNELS';
+type TabId = 'OPERATIONS' | 'DASHBOARD' | 'RADAR' | 'PIPELINE' | 'INTELLIGENCE' | 'LIBRARY' | 'PREPARATION' | 'CALENDAR' | 'ANALYTICS' | 'CHANNELS';
 
 const PIPELINE_STATE_LABELS: Record<string, { label: string; color: string }> = {
   ENCONTRADO: { label: '1. Encontrado', color: 'bg-slate-800 text-slate-300 border-slate-700' },
@@ -1040,7 +1041,27 @@ export default function App() {
         <aside className="w-64 shrink-0 border-r border-slate-800/80 bg-[#090D14] p-4 flex flex-col justify-between">
           <nav className="space-y-1.5">
             <div className="px-3 py-2 text-[10px] font-mono uppercase tracking-widest text-slate-500">
-              Núcleo Operacional
+              EgoTV Operations
+            </div>
+            <button
+              onClick={() => setActiveTab('OPERATIONS')}
+              className={`w-full flex items-center justify-between px-3.5 py-2.5 rounded-xl text-xs font-semibold transition ${
+                activeTab === 'OPERATIONS'
+                  ? 'bg-gradient-to-r from-cyan-500/25 to-blue-500/25 text-cyan-200 border border-cyan-500/50 shadow-md'
+                  : 'text-cyan-400 hover:text-cyan-200 hover:bg-cyan-500/10 border border-cyan-500/20'
+              }`}
+            >
+              <div className="flex items-center gap-2.5">
+                <Sparkles className="w-4 h-4 text-cyan-400 animate-pulse" />
+                <span>EgoTV Operations</span>
+              </div>
+              <span className="text-[10px] font-mono px-1.5 py-0.5 rounded bg-cyan-500/20 text-cyan-300 font-bold">
+                NOVO
+              </span>
+            </button>
+
+            <div className="pt-2 px-3 py-1.5 text-[10px] font-mono uppercase tracking-widest text-slate-500">
+              Núcleo Operacional Clássico
             </div>
             {[
               { id: 'DASHBOARD', label: 'Dashboard Principal', icon: Activity, badge: '90/dia' },
@@ -1127,6 +1148,13 @@ export default function App() {
                 Transparência de Dados Ativa
               </span>
             </div>
+          )}
+
+          {/* ================================================================
+              NOVA SEÇÃO: EGOTV OPERATIONS
+             ================================================================ */}
+          {activeTab === 'OPERATIONS' && (
+            <EgoTVOperations />
           )}
 
           {/* ================================================================
